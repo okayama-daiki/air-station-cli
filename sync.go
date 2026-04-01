@@ -72,6 +72,7 @@ func parseSyncCSV(path string) ([]syncEntry, error) {
 	r := csv.NewReader(f)
 	r.TrimLeadingSpace = true
 	r.Comment = '#'
+	r.FieldsPerRecord = -1
 
 	var entries []syncEntry
 	seen := make(map[string]bool)
@@ -89,16 +90,22 @@ func parseSyncCSV(path string) ([]syncEntry, error) {
 			lineNum++
 			continue
 		}
-		mac := strings.TrimSpace(record[0])
-		ip := strings.TrimSpace(record[1])
+		ip := strings.TrimSpace(record[0])
+		mac := strings.TrimSpace(record[1])
 
 		// Skip header row
 		if first {
 			first = false
-			if strings.EqualFold(mac, "mac") || strings.EqualFold(mac, "mac address") {
+			if strings.EqualFold(ip, "ip") || strings.EqualFold(ip, "ip address") {
 				lineNum++
 				continue
 			}
+		}
+
+		// Skip rows without a MAC address (e.g. router entry)
+		if mac == "" {
+			lineNum++
+			continue
 		}
 
 		normMAC := airstation.NormalizeMAC(mac)
@@ -115,7 +122,7 @@ func parseSyncCSV(path string) ([]syncEntry, error) {
 
 		entries = append(entries, syncEntry{
 			MAC: normMAC,
-			IP:  strings.TrimSpace(ip),
+			IP:  ip,
 		})
 		lineNum++
 	}

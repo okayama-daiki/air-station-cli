@@ -16,7 +16,7 @@ func TestParseSyncCSV(t *testing.T) {
 	}{
 		{
 			name:    "valid CSV with header",
-			content: "MAC,IP\n00:11:22:33:44:55,192.168.1.100\nAA:BB:CC:DD:EE:FF,192.168.1.101\n",
+			content: "IP address,MAC address,Owner,Affirmation,Note\n192.168.1.100,00:11:22:33:44:55,,,\n192.168.1.101,AA:BB:CC:DD:EE:FF,,,\n",
 			want: []syncEntry{
 				{MAC: "00:11:22:33:44:55", IP: "192.168.1.100"},
 				{MAC: "AA:BB:CC:DD:EE:FF", IP: "192.168.1.101"},
@@ -25,7 +25,7 @@ func TestParseSyncCSV(t *testing.T) {
 		},
 		{
 			name:    "valid CSV without header",
-			content: "00:11:22:33:44:55,192.168.1.100\nAA:BB:CC:DD:EE:FF,192.168.1.101\n",
+			content: "192.168.1.100,00:11:22:33:44:55\n192.168.1.101,AA:BB:CC:DD:EE:FF\n",
 			want: []syncEntry{
 				{MAC: "00:11:22:33:44:55", IP: "192.168.1.100"},
 				{MAC: "AA:BB:CC:DD:EE:FF", IP: "192.168.1.101"},
@@ -34,25 +34,25 @@ func TestParseSyncCSV(t *testing.T) {
 		},
 		{
 			name:      "invalid MAC address",
-			content:   "00:11:22:33:44:ZZ,192.168.1.100\n",
+			content:   "192.168.1.100,00:11:22:33:44:ZZ\n",
 			want:      nil,
 			wantError: true,
 		},
 		{
 			name:      "invalid IP address",
-			content:   "00:11:22:33:44:55,999.999.999.999\n",
+			content:   "999.999.999.999,00:11:22:33:44:55\n",
 			want:      nil,
 			wantError: true,
 		},
 		{
 			name:      "duplicate MAC",
-			content:   "00:11:22:33:44:55,192.168.1.100\n00:11:22:33:44:55,192.168.1.101\n",
+			content:   "192.168.1.100,00:11:22:33:44:55\n192.168.1.101,00:11:22:33:44:55\n",
 			want:      nil,
 			wantError: true,
 		},
 		{
 			name:    "comments and blank lines",
-			content: "# This is a comment\nMAC,IP\n\n00:11:22:33:44:55,192.168.1.100\n# Another comment\n",
+			content: "# This is a comment\nIP address,MAC address\n\n192.168.1.100,00:11:22:33:44:55\n# Another comment\n",
 			want: []syncEntry{
 				{MAC: "00:11:22:33:44:55", IP: "192.168.1.100"},
 			},
@@ -60,7 +60,15 @@ func TestParseSyncCSV(t *testing.T) {
 		},
 		{
 			name:    "insensitive header matching",
-			content: "mac address,IP\n00:11:22:33:44:55,192.168.1.100\n",
+			content: "ip address,MAC address\n192.168.1.100,00:11:22:33:44:55\n",
+			want: []syncEntry{
+				{MAC: "00:11:22:33:44:55", IP: "192.168.1.100"},
+			},
+			wantError: false,
+		},
+		{
+			name:    "skip empty MAC row",
+			content: "IP address,MAC address,Owner,Affirmation,Note\n192.168.11.1,,,,ルータ\n192.168.1.100,00:11:22:33:44:55,,,\n",
 			want: []syncEntry{
 				{MAC: "00:11:22:33:44:55", IP: "192.168.1.100"},
 			},
