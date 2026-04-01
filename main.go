@@ -107,30 +107,38 @@ func runMAC(ctx context.Context, client *airstation.Client, action string, args 
 		if len(args) < 1 {
 			return errors.New("missing MAC address")
 		}
-		if err = client.AddMAC(ctx, args[0]); err == nil {
-			if !jsonOutput {
-				fmt.Printf("Added %s\n", args[0])
-			}
-			result, err = client.ReadMacFiltering(ctx)
+		if err = client.AddMAC(ctx, args[0]); err != nil {
+			return err
 		}
+		if !jsonOutput {
+			fmt.Printf("Added %s\n", args[0])
+			return nil
+		}
+		result, err = client.ReadMacFiltering(ctx)
 	case "update":
 		if len(args) < 2 {
 			return errors.New("missing current/new MAC address")
 		}
+		if err = client.UpdateMACEntry(ctx, args[0], args[1]); err != nil {
+			return err
+		}
 		if !jsonOutput {
 			fmt.Printf("Updated %s -> %s\n", args[0], args[1])
+			return nil
 		}
-		result, err = client.UpdateMAC(ctx, args[0], args[1])
+		result, err = client.ReadMacFiltering(ctx)
 	case "remove":
 		if len(args) < 1 {
 			return errors.New("missing MAC address")
 		}
-		if err = client.RemoveMAC(ctx, args[0]); err == nil {
-			if !jsonOutput {
-				fmt.Printf("Removed %s\n", args[0])
-			}
-			result, err = client.ReadMacFiltering(ctx)
+		if err = client.RemoveMAC(ctx, args[0]); err != nil {
+			return err
 		}
+		if !jsonOutput {
+			fmt.Printf("Removed %s\n", args[0])
+			return nil
+		}
+		result, err = client.ReadMacFiltering(ctx)
 	default:
 		return fmt.Errorf("unknown mac action: %s", action)
 	}

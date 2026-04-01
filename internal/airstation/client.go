@@ -285,21 +285,28 @@ func (c *Client) AddMAC(ctx context.Context, mac string) error {
 }
 
 func (c *Client) UpdateMAC(ctx context.Context, currentMAC, newMAC string) (*MacFilterState, error) {
+	if err := c.UpdateMACEntry(ctx, currentMAC, newMAC); err != nil {
+		return nil, err
+	}
+	return c.ReadMacFiltering(ctx)
+}
+
+func (c *Client) UpdateMACEntry(ctx context.Context, currentMAC, newMAC string) error {
 	current := NormalizeMAC(currentMAC)
 	next := NormalizeMAC(newMAC)
 	if !IsMACAddress(current) || !IsMACAddress(next) {
-		return nil, errors.New("invalid MAC address")
+		return errors.New("invalid MAC address")
 	}
 
 	entry, err := c.findMACRegistryEntry(ctx, current)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	path := fmt.Sprintf("/cgi-bin/cgi?req=frm&frm=mac_reg.html&EDIT%d=1", entry.Index)
 	page, err := c.getAuthenticatedPage(ctx, path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	submitName := fmt.Sprintf("EDIT%d", entry.Index)
@@ -307,15 +314,12 @@ func (c *Client) UpdateMAC(ctx context.Context, currentMAC, newMAC string) (*Mac
 		return form.HasControl("maclist") && form.HasControl(submitName)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("MAC edit form not found: %w", err)
+		return fmt.Errorf("MAC edit form not found: %w", err)
 	}
 
 	values := form.Values(submitName)
 	values.Set("maclist", next)
-	if err := c.submitForm(ctx, page, form, values, submitName); err != nil {
-		return nil, err
-	}
-	return c.ReadMacFiltering(ctx)
+	return c.submitForm(ctx, page, form, values, submitName)
 }
 
 func (c *Client) RemoveMAC(ctx context.Context, mac string) error {
