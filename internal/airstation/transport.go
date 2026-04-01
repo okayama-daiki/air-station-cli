@@ -69,8 +69,18 @@ func (c *Client) roundTrip(ctx context.Context, method string, target *url.URL, 
 	}
 
 	body := ""
-	if values != nil && method != http.MethodGet {
-		body = values.Encode()
+	if values != nil {
+		if method == http.MethodGet {
+			q := target.Query()
+			for key, vals := range values {
+				for _, v := range vals {
+					q.Add(key, v)
+				}
+			}
+			target.RawQuery = q.Encode()
+		} else {
+			body = values.Encode()
+		}
 	}
 
 	var request bytes.Buffer

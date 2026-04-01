@@ -301,7 +301,7 @@ Usage:
 Options:
   --base-url <url>    Default: %s
   --username <name>   Default: %s
-  --password <pass>   Default: AIR_STATION_PASSWORD env var
+  --password <pass>   Default: AIR_STATION_PASSWORD or empty
   --json              Print raw JSON
   -h, --help          Show help
 `, cfg.BaseURL, cfg.Username)

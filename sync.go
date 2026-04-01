@@ -36,10 +36,6 @@ func runSync(ctx context.Context, client *airstation.Client, csvPath string) err
 	if err != nil {
 		return fmt.Errorf("parsing CSV: %w", err)
 	}
-	if len(entries) == 0 {
-		return fmt.Errorf("CSV file has no valid entries")
-	}
-
 	fmt.Println("Reading current router configuration...")
 	macState, err := client.ReadMacFiltering(ctx)
 	if err != nil {
@@ -105,14 +101,13 @@ func parseSyncCSV(path string) ([]syncEntry, error) {
 			}
 		}
 
-		if !airstation.IsMACAddress(mac) {
+		normMAC := airstation.NormalizeMAC(mac)
+		if !airstation.IsMACAddress(normMAC) {
 			return nil, fmt.Errorf("line %d: invalid MAC address: %q", lineNum, mac)
 		}
 		if !airstation.IsIPv4(ip) {
 			return nil, fmt.Errorf("line %d: invalid IP address: %q", lineNum, ip)
 		}
-
-		normMAC := airstation.NormalizeMAC(mac)
 		if seen[normMAC] {
 			return nil, fmt.Errorf("line %d: duplicate MAC address: %q", lineNum, mac)
 		}
