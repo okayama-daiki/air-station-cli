@@ -401,6 +401,12 @@ func (c *Client) RemoveMAC(ctx context.Context, mac string) error {
 	if err != nil {
 		return err
 	}
+	if c.debug {
+		if html, err2 := result.Doc.Html(); err2 == nil {
+			_ = os.WriteFile("/tmp/mac_delete_response.html", []byte(html), 0o644)
+			c.logDebug("remove: response saved to /tmp/mac_delete_response.html")
+		}
+	}
 	c.macRegPage = result
 	c.saveMacRegPage(result)
 	return nil
