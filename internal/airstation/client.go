@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"os"
 	"strings"
 	"time"
 
@@ -57,13 +58,14 @@ func DefaultConfig() Config {
 }
 
 type Client struct {
-	baseURL   *url.URL
-	username  string
-	password  string
-	userAgent string
-	jar       http.CookieJar
-	timeout   time.Duration
-	loggedIn  bool
+	baseURL    *url.URL
+	username   string
+	password   string
+	userAgent  string
+	jar        http.CookieJar
+	timeout    time.Duration
+	loggedIn   bool
+	macRegPage *Page // cached POST response for chaining mac_reg.html operations
 }
 
 type MacFilterState struct {
@@ -134,6 +136,9 @@ func (c *Client) Login(ctx context.Context) error {
 	if c.loggedIn {
 		return nil
 	}
+	if c.password == "" {
+		return errors.New("password is required: set --password or AIR_STATION_PASSWORD")
+	}
 
 	loginPage, html, err := c.fetchPage(ctx, loginPath, nil)
 	if err != nil {
@@ -169,7 +174,12 @@ func (c *Client) Login(ctx context.Context) error {
 		return err
 	}
 	if isLoginPage(verifyPage.Doc) {
-		return errors.New("login failed")
+		// Re-fetch the login page to check if another user is already logged in
+		loginCheck, _, err := c.fetchPage(ctx, loginPath, nil)
+		if err == nil && isAnotherUserLoggedIn(loginCheck.Doc) {
+			return errors.New("login failed: another user is already logged in")
+		}
+		return fmt.Errorf("login failed: invalid username or password (username: %s)", c.username)
 	}
 	c.loggedIn = true
 	return nil
@@ -234,29 +244,44 @@ func (c *Client) SetMacFiltering(ctx context.Context, enabled24, enabled5 *bool)
 	return c.ReadMacFiltering(ctx)
 }
 
-func (c *Client) AddMAC(ctx context.Context, mac string) (*MacFilterState, error) {
+func (c *Client) AddMAC(ctx context.Context, mac string) error {
 	normalized := NormalizeMAC(mac)
 	if !IsMACAddress(normalized) {
-		return nil, fmt.Errorf("invalid MAC address: %s", mac)
+		return fmt.Errorf("invalid MAC address: %s", mac)
 	}
 
-	page, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
+	page, err := c.takeMacRegPage(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	form, err := findForm(page.Doc, func(form *Form) bool {
 		return form.HasControl("maclist") && form.HasControl("ADD")
 	})
 	if err != nil {
-		return nil, fmt.Errorf("MAC add form not found: %w", err)
+		title := strings.TrimSpace(page.Doc.Find("title").First().Text())
+		var controls []string
+		page.Doc.Find("form").Each(func(_ int, s *goquery.Selection) {
+			s.Find("input, button, select, textarea").Each(func(_ int, el *goquery.Selection) {
+				name, _ := el.Attr("name")
+				typ, _ := el.Attr("type")
+				controls = append(controls, fmt.Sprintf("%s[%s]", name, typ))
+			})
+		})
+		return fmt.Errorf("MAC add form not found (url=%s title=%q controls=%v): %w", page.URL, title, controls, err)
 	}
 
 	values := form.Values("ADD")
 	values.Set("maclist", normalized)
-	if err := c.submitForm(ctx, page, form, values, "ADD"); err != nil {
-		return nil, err
+	result, err := c.submitFormWithPage(ctx, page, form, values, "ADD")
+	if err != nil {
+		return err
 	}
-	return c.ReadMacFiltering(ctx)
+	// DEBUG: dump response page for inspection
+	if html, err2 := result.Doc.Html(); err2 == nil {
+		_ = os.WriteFile("/tmp/mac_add_response.html", []byte(html), 0o644)
+	}
+	c.macRegPage = result
+	return nil
 }
 
 func (c *Client) UpdateMAC(ctx context.Context, currentMAC, newMAC string) (*MacFilterState, error) {
@@ -293,31 +318,49 @@ func (c *Client) UpdateMAC(ctx context.Context, currentMAC, newMAC string) (*Mac
 	return c.ReadMacFiltering(ctx)
 }
 
-func (c *Client) RemoveMAC(ctx context.Context, mac string) (*MacFilterState, error) {
+func (c *Client) RemoveMAC(ctx context.Context, mac string) error {
 	normalized := NormalizeMAC(mac)
-	entry, err := c.findMACRegistryEntry(ctx, normalized)
+	page, err := c.takeMacRegPage(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	page, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
-	if err != nil {
-		return nil, err
+	var controlName string
+	page.Doc.Find("table.AD_LIST tr").EachWithBreak(func(index int, row *goquery.Selection) bool {
+		if index == 0 {
+			return true
+		}
+		if NormalizeMAC(row.Find("td").First().Text()) != normalized {
+			return true
+		}
+		row.Find(`input[type="hidden"][name^="DELETE"]`).EachWithBreak(func(_ int, input *goquery.Selection) bool {
+			name, _ := input.Attr("name")
+			if deletePattern.MatchString(name) {
+				controlName = name
+				return false
+			}
+			return true
+		})
+		return controlName == ""
+	})
+	if controlName == "" {
+		return fmt.Errorf("MAC entry not found: %s", normalized)
 	}
 
-	controlName := fmt.Sprintf("DELETE%d", entry.Index)
 	form, err := findForm(page.Doc, func(form *Form) bool {
 		return form.HasControl(controlName)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("MAC delete form not found: %w", err)
+		return fmt.Errorf("MAC delete form not found: %w", err)
 	}
 
-	values := form.Values("")
-	if err := c.submitForm(ctx, page, form, values, ""); err != nil {
-		return nil, err
+	values := form.Values(controlName)
+	result, err := c.submitFormWithPage(ctx, page, form, values, controlName)
+	if err != nil {
+		return err
 	}
-	return c.ReadMacFiltering(ctx)
+	c.macRegPage = result
+	return nil
 }
 
 func (c *Client) ReadDHCPStaticAssignments(ctx context.Context) ([]DHCPAssignment, error) {
@@ -473,6 +516,30 @@ func (c *Client) RemoveDHCPStaticAssignment(ctx context.Context, selector string
 	return c.ReadDHCPStaticAssignments(ctx)
 }
 
+func (c *Client) Logout(ctx context.Context) error {
+	if !c.loggedIn {
+		return nil
+	}
+	c.loggedIn = false
+
+	page, _, err := c.fetchPage(ctx, loginPath, nil)
+	if err != nil {
+		return err
+	}
+
+	// Look for a logout form (e.g. "force logout" button on the login page)
+	form, err := findForm(page.Doc, func(form *Form) bool {
+		return form.HasControl("logout") || form.HasControl("LOGOUT")
+	})
+	if err != nil {
+		// No logout form found — session will expire naturally
+		return nil
+	}
+
+	values := form.Values("")
+	return c.submitForm(ctx, page, form, values, "")
+}
+
 func (c *Client) getAuthenticatedPage(ctx context.Context, path string) (*Page, error) {
 	if err := c.Login(ctx); err != nil {
 		return nil, err
@@ -501,9 +568,14 @@ func (c *Client) fetchPage(ctx context.Context, path string, referer *url.URL) (
 }
 
 func (c *Client) submitForm(ctx context.Context, page *Page, form *Form, values url.Values, clickedName string) error {
+	_, err := c.submitFormWithPage(ctx, page, form, values, clickedName)
+	return err
+}
+
+func (c *Client) submitFormWithPage(ctx context.Context, page *Page, form *Form, values url.Values, clickedName string) (*Page, error) {
 	target, err := page.URL.Parse(form.Action)
 	if err != nil {
-		return fmt.Errorf("resolve form action: %w", err)
+		return nil, fmt.Errorf("resolve form action: %w", err)
 	}
 	method := form.Method
 	if method == "" {
@@ -517,8 +589,23 @@ func (c *Client) submitForm(ctx context.Context, page *Page, form *Form, values 
 		}
 	}
 
-	_, _, _, err = c.requestDocument(ctx, method, target, values, page.URL)
-	return err
+	doc, finalURL, _, err := c.requestDocument(ctx, method, target, values, page.URL)
+	if err != nil {
+		return nil, err
+	}
+	return &Page{URL: finalURL, Doc: doc}, nil
+}
+
+// takeMacRegPage returns the cached POST-response page from the last mac_reg.html
+// operation, or fetches a fresh copy if no cache is available. Using the POST
+// response avoids a round-trip that puts the router into a "pending" state where
+// the ADD form is no longer visible.
+func (c *Client) takeMacRegPage(ctx context.Context) (*Page, error) {
+	if page := c.macRegPage; page != nil {
+		c.macRegPage = nil
+		return page, nil
+	}
+	return c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
 }
 
 func (c *Client) requestDocument(ctx context.Context, method string, target *url.URL, values url.Values, referer *url.URL) (*goquery.Document, *url.URL, string, error) {
@@ -612,6 +699,11 @@ func IsMACAddress(value string) bool {
 func IsIPv4(value string) bool {
 	parsed := net.ParseIP(strings.TrimSpace(value))
 	return parsed != nil && parsed.To4() != nil
+}
+
+func isAnotherUserLoggedIn(doc *goquery.Document) bool {
+	return isLoginPage(doc) &&
+		(doc.Find(`input[name="logout"]`).Length() > 0 || doc.Find(`input[name="LOGOUT"]`).Length() > 0)
 }
 
 func isLoginPage(doc *goquery.Document) bool {

@@ -50,6 +50,7 @@ func run(ctx context.Context, argv []string) error {
 	if err != nil {
 		return err
 	}
+	defer client.Logout(ctx)
 
 	resource := positionals[0]
 	jsonOutput := options["json"] == "true"
@@ -99,21 +100,37 @@ func runMAC(ctx context.Context, client *airstation.Client, action string, args 
 			return errors.New("specify --enable-2g and/or --enable-5g")
 		}
 		result, err = client.SetMacFiltering(ctx, enable2g, enable5g)
+		if err == nil && !jsonOutput {
+			fmt.Println("Updated")
+		}
 	case "add":
 		if len(args) < 1 {
 			return errors.New("missing MAC address")
 		}
-		result, err = client.AddMAC(ctx, args[0])
+		if err = client.AddMAC(ctx, args[0]); err == nil {
+			if !jsonOutput {
+				fmt.Printf("Added %s\n", args[0])
+			}
+			result, err = client.ReadMacFiltering(ctx)
+		}
 	case "update":
 		if len(args) < 2 {
 			return errors.New("missing current/new MAC address")
+		}
+		if !jsonOutput {
+			fmt.Printf("Updated %s -> %s\n", args[0], args[1])
 		}
 		result, err = client.UpdateMAC(ctx, args[0], args[1])
 	case "remove":
 		if len(args) < 1 {
 			return errors.New("missing MAC address")
 		}
-		result, err = client.RemoveMAC(ctx, args[0])
+		if err = client.RemoveMAC(ctx, args[0]); err == nil {
+			if !jsonOutput {
+				fmt.Printf("Removed %s\n", args[0])
+			}
+			result, err = client.ReadMacFiltering(ctx)
+		}
 	default:
 		return fmt.Errorf("unknown mac action: %s", action)
 	}
@@ -147,6 +164,9 @@ func runDHCP(ctx context.Context, client *airstation.Client, action string, args
 			return err2
 		}
 		result, err = client.AddDHCPStaticAssignment(ctx, ip, mac)
+		if err == nil && !jsonOutput {
+			fmt.Printf("Added %s  %s\n", mac, ip)
+		}
 	case "update":
 		if len(args) < 1 {
 			return errors.New("missing selector for dhcp update")
@@ -155,11 +175,17 @@ func runDHCP(ctx context.Context, client *airstation.Client, action string, args
 			return errors.New("specify --ip and/or --mac")
 		}
 		result, err = client.UpdateDHCPStaticAssignment(ctx, args[0], options["ip"], options["mac"])
+		if err == nil && !jsonOutput {
+			fmt.Printf("Updated %s\n", args[0])
+		}
 	case "remove":
 		if len(args) < 1 {
 			return errors.New("missing selector for dhcp remove")
 		}
 		result, err = client.RemoveDHCPStaticAssignment(ctx, args[0])
+		if err == nil && !jsonOutput {
+			fmt.Printf("Removed %s\n", args[0])
+		}
 	default:
 		return fmt.Errorf("unknown dhcp action: %s", action)
 	}

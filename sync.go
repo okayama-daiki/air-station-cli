@@ -244,13 +244,13 @@ func applySyncDiff(ctx context.Context, client *airstation.Client, diff syncDiff
 	// Delete before add/update to avoid capacity issues
 	for _, mac := range diff.MACsToRemove {
 		fmt.Printf("Removing MAC filter: %s\n", mac)
-		if _, err := client.RemoveMAC(ctx, mac); err != nil {
+		if err := client.RemoveMAC(ctx, mac); err != nil {
 			return fmt.Errorf("removing MAC %s: %w", mac, err)
 		}
 	}
 	for _, mac := range diff.MACsToAdd {
 		fmt.Printf("Adding MAC filter: %s\n", mac)
-		if _, err := client.AddMAC(ctx, mac); err != nil {
+		if err := client.AddMAC(ctx, mac); err != nil {
 			return fmt.Errorf("adding MAC %s: %w", mac, err)
 		}
 	}
