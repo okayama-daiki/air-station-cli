@@ -66,12 +66,11 @@ type Client struct {
 	userAgent   string
 	jar         http.CookieJar
 	timeout     time.Duration
-	verbose         bool
-	debug           bool
-	loggedIn        bool
-	sessionFile     string
-	macRegPageFile  string
-	macRegPage      *Page // cached POST response for chaining mac_reg.html operations
+	verbose     bool
+	debug       bool
+	loggedIn    bool
+	sessionFile string
+	macRegPage  *Page // cached page for chaining consecutive mac_reg.html operations
 }
 
 type MacFilterState struct {
@@ -132,25 +131,19 @@ func NewClient(cfg Config) (*Client, error) {
 	if err != nil {
 		sessionFile = ""
 	}
-	macRegPageFile, err := macRegPageFilePath(baseURL)
-	if err != nil {
-		macRegPageFile = ""
-	}
 
 	c := &Client{
-		baseURL:        baseURL,
-		username:       cfg.Username,
-		password:       cfg.Password,
-		userAgent:      cfg.UserAgent,
-		jar:            jar,
-		timeout:        cfg.Timeout,
-		verbose:        cfg.Verbose,
-		debug:          cfg.Debug,
-		sessionFile:    sessionFile,
-		macRegPageFile: macRegPageFile,
+		baseURL:     baseURL,
+		username:    cfg.Username,
+		password:    cfg.Password,
+		userAgent:   cfg.UserAgent,
+		jar:         jar,
+		timeout:     cfg.Timeout,
+		verbose:     cfg.Verbose,
+		debug:       cfg.Debug,
+		sessionFile: sessionFile,
 	}
 	c.loadSession()
-	c.loadMacRegPage()
 	return c, nil
 }
 
@@ -307,12 +300,7 @@ func (c *Client) AddMAC(ctx context.Context, mac string) error {
 	if err != nil {
 		return err
 	}
-	// DEBUG: dump response page for inspection
-	if html, err2 := result.Doc.Html(); err2 == nil {
-		_ = os.WriteFile("/tmp/mac_add_response.html", []byte(html), 0o644)
-	}
 	c.macRegPage = result
-	c.saveMacRegPage(result)
 	return nil
 }
 
@@ -401,14 +389,7 @@ func (c *Client) RemoveMAC(ctx context.Context, mac string) error {
 	if err != nil {
 		return err
 	}
-	if c.debug {
-		if html, err2 := result.Doc.Html(); err2 == nil {
-			_ = os.WriteFile("/tmp/mac_delete_response.html", []byte(html), 0o644)
-			c.logDebug("remove: response saved to /tmp/mac_delete_response.html")
-		}
-	}
 	c.macRegPage = result
-	c.saveMacRegPage(result)
 	return nil
 }
 
@@ -663,7 +644,55 @@ func (c *Client) submitFormWithPage(ctx context.Context, page *Page, form *Form,
 	if err != nil {
 		return nil, err
 	}
-	return &Page{URL: finalURL, Doc: doc}, nil
+	result := &Page{URL: finalURL, Doc: doc}
+
+	if isWaitingPage(doc) {
+		if err := c.waitForRouterReady(ctx); err != nil {
+			return nil, err
+		}
+		redirectPath, _ := result.Doc.Find(`a[href*="/cgi-bin/cgi"]`).First().Attr("href")
+		if redirectPath == "" {
+			return nil, errors.New("waiting page: could not find redirect URL")
+		}
+		return c.getAuthenticatedPage(ctx, redirectPath)
+	}
+
+	return result, nil
+}
+
+func isWaitingPage(doc *goquery.Document) bool {
+	return doc.Find(`title[data-file="waiting_page"]`).Length() > 0
+}
+
+func (c *Client) waitForRouterReady(ctx context.Context) error {
+	c.logDebug("waiting for router to complete settings")
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+		rnd := time.Now().UnixNano() % 100000000
+		path := fmt.Sprintf("/cgi-bin/cgi?req=fnc&fnc=%%24{get_busy_status}&rnd=%d", rnd)
+		target, err := c.resolveURL(path)
+		if err != nil {
+			return err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+		if err != nil {
+			return err
+		}
+		resp, err := c.doRequest(req, nil, nil)
+		if err != nil {
+			c.logDebug("busy status: error (%v), retrying", err)
+			continue
+		}
+		status := strings.TrimSpace(string(resp.Body))
+		c.logDebug("busy status: %q", status)
+		if status == "0" {
+			return nil
+		}
+	}
 }
 
 // takeMacRegPage returns the cached POST-response page from the last mac_reg.html

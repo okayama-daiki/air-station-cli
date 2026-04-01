@@ -8,12 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/PuerkitoBio/goquery"
 )
 
 const sessionTTL = 5 * time.Minute
-const macRegPageTTL = 30 * time.Second
 
 type savedSession struct {
 	SavedAt time.Time     `json:"saved_at"`
@@ -33,82 +30,6 @@ func sessionFilePath(baseURL *url.URL) (string, error) {
 	}
 	safe := strings.NewReplacer(":", "_", ".", "_").Replace(baseURL.Host)
 	return filepath.Join(cacheDir, "air-station", "session-"+safe+".json"), nil
-}
-
-func macRegPageFilePath(baseURL *url.URL) (string, error) {
-	cacheDir, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	safe := strings.NewReplacer(":", "_", ".", "_").Replace(baseURL.Host)
-	return filepath.Join(cacheDir, "air-station", "mac-reg-page-"+safe+".json"), nil
-}
-
-type savedMacRegPage struct {
-	SavedAt time.Time `json:"saved_at"`
-	URL     string    `json:"url"`
-	HTML    string    `json:"html"`
-}
-
-func (c *Client) saveMacRegPage(page *Page) {
-	if c.macRegPageFile == "" {
-		return
-	}
-	html, err := page.Doc.Html()
-	if err != nil {
-		return
-	}
-	saved := savedMacRegPage{
-		SavedAt: time.Now(),
-		URL:     page.URL.String(),
-		HTML:    html,
-	}
-	data, err := json.Marshal(saved)
-	if err != nil {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(c.macRegPageFile), 0o700); err != nil {
-		return
-	}
-	_ = os.WriteFile(c.macRegPageFile, data, 0o600)
-	c.logDebug("mac-reg-page: saved to %s", c.macRegPageFile)
-}
-
-func (c *Client) loadMacRegPage() {
-	if c.macRegPageFile == "" {
-		return
-	}
-	data, err := os.ReadFile(c.macRegPageFile)
-	if err != nil {
-		return
-	}
-	var saved savedMacRegPage
-	if err := json.Unmarshal(data, &saved); err != nil {
-		return
-	}
-	age := time.Since(saved.SavedAt)
-	if age > macRegPageTTL {
-		c.logDebug("mac-reg-page: expired (age=%s)", age.Round(time.Second))
-		_ = os.Remove(c.macRegPageFile)
-		return
-	}
-	pageURL, err := url.Parse(saved.URL)
-	if err != nil {
-		return
-	}
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(saved.HTML))
-	if err != nil {
-		return
-	}
-	c.macRegPage = &Page{URL: pageURL, Doc: doc}
-	c.logDebug("mac-reg-page: reusing cached page (age=%s)", age.Round(time.Second))
-}
-
-func (c *Client) deleteMacRegPage() {
-	if c.macRegPageFile == "" {
-		return
-	}
-	_ = os.Remove(c.macRegPageFile)
 }
 
 func (c *Client) loadSession() {
