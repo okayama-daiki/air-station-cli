@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"air-station-cli/internal/airstation"
@@ -77,16 +78,19 @@ func parseSyncCSV(path string) ([]syncEntry, error) {
 	r.Comment = '#'
 
 	var entries []syncEntry
+	seen := make(map[string]bool)
 	first := true
+	lineNum := 1
 	for {
 		record, err := r.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("line %d: %w", lineNum, err)
 		}
 		if len(record) < 2 {
+			lineNum++
 			continue
 		}
 		mac := strings.TrimSpace(record[0])
@@ -96,20 +100,29 @@ func parseSyncCSV(path string) ([]syncEntry, error) {
 		if first {
 			first = false
 			if strings.EqualFold(mac, "mac") || strings.EqualFold(mac, "mac address") {
+				lineNum++
 				continue
 			}
 		}
 
 		if !airstation.IsMACAddress(mac) {
-			return nil, fmt.Errorf("invalid MAC address: %q", mac)
+			return nil, fmt.Errorf("line %d: invalid MAC address: %q", lineNum, mac)
 		}
 		if !airstation.IsIPv4(ip) {
-			return nil, fmt.Errorf("invalid IP address: %q", ip)
+			return nil, fmt.Errorf("line %d: invalid IP address: %q", lineNum, ip)
 		}
+
+		normMAC := airstation.NormalizeMAC(mac)
+		if seen[normMAC] {
+			return nil, fmt.Errorf("line %d: duplicate MAC address: %q", lineNum, mac)
+		}
+		seen[normMAC] = true
+
 		entries = append(entries, syncEntry{
-			MAC: airstation.NormalizeMAC(mac),
+			MAC: normMAC,
 			IP:  strings.TrimSpace(ip),
 		})
+		lineNum++
 	}
 	return entries, nil
 }
@@ -157,9 +170,24 @@ func computeSyncDiff(entries []syncEntry, macState *airstation.MacFilterState, d
 	}
 	for mac, assignment := range dhcpByMAC {
 		if _, inCSV := csvByMAC[mac]; !inCSV {
-			diff.DHCPToRemove = append(diff.DHCPToRemove, assignment)
+			if assignment.DeleteIndex != nil {
+				diff.DHCPToRemove = append(diff.DHCPToRemove, assignment)
+			}
 		}
 	}
+
+	// Sort for deterministic output
+	sort.Strings(diff.MACsToAdd)
+	sort.Strings(diff.MACsToRemove)
+	sort.Slice(diff.DHCPToAdd, func(i, j int) bool {
+		return diff.DHCPToAdd[i].MAC < diff.DHCPToAdd[j].MAC
+	})
+	sort.Slice(diff.DHCPToRemove, func(i, j int) bool {
+		return diff.DHCPToRemove[i].MAC < diff.DHCPToRemove[j].MAC
+	})
+	sort.Slice(diff.DHCPToUpdate, func(i, j int) bool {
+		return diff.DHCPToUpdate[i].Current.MAC < diff.DHCPToUpdate[j].Current.MAC
+	})
 
 	return diff
 }
@@ -211,23 +239,25 @@ func syncConfirm(prompt string) bool {
 }
 
 func applySyncDiff(ctx context.Context, client *airstation.Client, diff syncDiff) error {
-	for _, mac := range diff.MACsToAdd {
-		fmt.Printf("Adding MAC filter: %s\n", mac)
-		if _, err := client.AddMAC(ctx, mac); err != nil {
-			return fmt.Errorf("adding MAC %s: %w", mac, err)
-		}
-	}
+	// Delete before add/update to avoid capacity issues
 	for _, mac := range diff.MACsToRemove {
 		fmt.Printf("Removing MAC filter: %s\n", mac)
 		if _, err := client.RemoveMAC(ctx, mac); err != nil {
 			return fmt.Errorf("removing MAC %s: %w", mac, err)
 		}
 	}
+	for _, mac := range diff.MACsToAdd {
+		fmt.Printf("Adding MAC filter: %s\n", mac)
+		if _, err := client.AddMAC(ctx, mac); err != nil {
+			return fmt.Errorf("adding MAC %s: %w", mac, err)
+		}
+	}
 
-	for _, e := range diff.DHCPToAdd {
-		fmt.Printf("Adding DHCP reservation: %s  %s\n", e.MAC, e.IP)
-		if _, err := client.AddDHCPStaticAssignment(ctx, e.IP, e.MAC); err != nil {
-			return fmt.Errorf("adding DHCP %s %s: %w", e.MAC, e.IP, err)
+	// Delete, then update, then add DHCP reservations
+	for _, a := range diff.DHCPToRemove {
+		fmt.Printf("Removing DHCP reservation: %s  %s\n", a.MAC, a.IP)
+		if _, err := client.RemoveDHCPStaticAssignment(ctx, a.MAC); err != nil {
+			return fmt.Errorf("removing DHCP %s: %w", a.MAC, err)
 		}
 	}
 	for _, u := range diff.DHCPToUpdate {
@@ -236,10 +266,10 @@ func applySyncDiff(ctx context.Context, client *airstation.Client, diff syncDiff
 			return fmt.Errorf("updating DHCP %s: %w", u.Current.MAC, err)
 		}
 	}
-	for _, a := range diff.DHCPToRemove {
-		fmt.Printf("Removing DHCP reservation: %s  %s\n", a.MAC, a.IP)
-		if _, err := client.RemoveDHCPStaticAssignment(ctx, a.MAC); err != nil {
-			return fmt.Errorf("removing DHCP %s: %w", a.MAC, err)
+	for _, e := range diff.DHCPToAdd {
+		fmt.Printf("Adding DHCP reservation: %s  %s\n", e.MAC, e.IP)
+		if _, err := client.AddDHCPStaticAssignment(ctx, e.IP, e.MAC); err != nil {
+			return fmt.Errorf("adding DHCP %s %s: %w", e.MAC, e.IP, err)
 		}
 	}
 

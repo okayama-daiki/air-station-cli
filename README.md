@@ -39,7 +39,31 @@ go run . --help
 ./air-station dhcp add --ip 192.168.11.200 --mac AA:BB:CC:DD:EE:FF
 ./air-station dhcp update AA:BB:CC:DD:EE:FF --ip 192.168.11.210
 ./air-station dhcp remove 192.168.11.210
+
+./air-station sync config.csv
 ```
+
+## Sync from CSV
+
+The `sync` command synchronizes MAC filtering and DHCP static assignments from a CSV file:
+
+```bash
+./air-station sync config.csv
+```
+
+CSV format (header optional):
+```
+MAC,IP
+00:11:22:33:44:55,192.168.1.100
+AA:BB:CC:DD:EE:FF,192.168.1.101
+```
+
+Supported variations:
+- `MAC` or `MAC Address` header
+- Comments with `#`
+- Extra blank lines (ignored)
+
+The command displays a diff and prompts for confirmation before applying changes.
 
 JSON output:
 

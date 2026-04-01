@@ -42,6 +42,8 @@ func run(ctx context.Context, argv []string) error {
 	}
 	if value := options["password"]; value != "" {
 		cfg.Password = value
+	} else if value := os.Getenv("AIR_STATION_PASSWORD"); value != "" {
+		cfg.Password = value
 	}
 
 	client, err := airstation.NewClient(cfg)
