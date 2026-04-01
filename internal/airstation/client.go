@@ -348,29 +348,49 @@ func (c *Client) UpdateMACEntry(ctx context.Context, currentMAC, newMAC string) 
 
 func (c *Client) RemoveMAC(ctx context.Context, mac string) error {
 	normalized := NormalizeMAC(mac)
+
+	findControlName := func(page *Page) string {
+		var controlName string
+		page.Doc.Find("table.AD_LIST tr").EachWithBreak(func(index int, row *goquery.Selection) bool {
+			if index == 0 {
+				return true
+			}
+			if NormalizeMAC(row.Find("td").First().Text()) != normalized {
+				return true
+			}
+			row.Find(`input[type="hidden"][name^="DELETE"]`).EachWithBreak(func(_ int, input *goquery.Selection) bool {
+				name, _ := input.Attr("name")
+				if deletePattern.MatchString(name) {
+					controlName = name
+					return false
+				}
+				return true
+			})
+			return controlName == ""
+		})
+		return controlName
+	}
+
 	page, err := c.takeMacRegPage(ctx)
 	if err != nil {
 		return err
 	}
 
-	var controlName string
-	page.Doc.Find("table.AD_LIST tr").EachWithBreak(func(index int, row *goquery.Selection) bool {
-		if index == 0 {
-			return true
+	controlName := findControlName(page)
+	if controlName == "" {
+		// Router may not have committed the previous write yet; retry with a fresh fetch.
+		c.logDebug("remove: MAC not found on first attempt, retrying after delay")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
 		}
-		if NormalizeMAC(row.Find("td").First().Text()) != normalized {
-			return true
+		page, err = c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
+		if err != nil {
+			return err
 		}
-		row.Find(`input[type="hidden"][name^="DELETE"]`).EachWithBreak(func(_ int, input *goquery.Selection) bool {
-			name, _ := input.Attr("name")
-			if deletePattern.MatchString(name) {
-				controlName = name
-				return false
-			}
-			return true
-		})
-		return controlName == ""
-	})
+		controlName = findControlName(page)
+	}
 	if controlName == "" {
 		return fmt.Errorf("MAC entry not found: %s", normalized)
 	}
