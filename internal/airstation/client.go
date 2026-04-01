@@ -66,11 +66,12 @@ type Client struct {
 	userAgent   string
 	jar         http.CookieJar
 	timeout     time.Duration
-	verbose     bool
-	debug       bool
-	loggedIn    bool
-	sessionFile string
-	macRegPage  *Page // cached POST response for chaining mac_reg.html operations
+	verbose         bool
+	debug           bool
+	loggedIn        bool
+	sessionFile     string
+	macRegPageFile  string
+	macRegPage      *Page // cached POST response for chaining mac_reg.html operations
 }
 
 type MacFilterState struct {
@@ -131,19 +132,25 @@ func NewClient(cfg Config) (*Client, error) {
 	if err != nil {
 		sessionFile = ""
 	}
+	macRegPageFile, err := macRegPageFilePath(baseURL)
+	if err != nil {
+		macRegPageFile = ""
+	}
 
 	c := &Client{
-		baseURL:     baseURL,
-		username:    cfg.Username,
-		password:    cfg.Password,
-		userAgent:   cfg.UserAgent,
-		jar:         jar,
-		timeout:     cfg.Timeout,
-		verbose:     cfg.Verbose,
-		debug:       cfg.Debug,
-		sessionFile: sessionFile,
+		baseURL:        baseURL,
+		username:       cfg.Username,
+		password:       cfg.Password,
+		userAgent:      cfg.UserAgent,
+		jar:            jar,
+		timeout:        cfg.Timeout,
+		verbose:        cfg.Verbose,
+		debug:          cfg.Debug,
+		sessionFile:    sessionFile,
+		macRegPageFile: macRegPageFile,
 	}
 	c.loadSession()
+	c.loadMacRegPage()
 	return c, nil
 }
 
@@ -305,6 +312,7 @@ func (c *Client) AddMAC(ctx context.Context, mac string) error {
 		_ = os.WriteFile("/tmp/mac_add_response.html", []byte(html), 0o644)
 	}
 	c.macRegPage = result
+	c.saveMacRegPage(result)
 	return nil
 }
 
@@ -378,20 +386,6 @@ func (c *Client) RemoveMAC(ctx context.Context, mac string) error {
 
 	controlName := findControlName(page)
 	if controlName == "" {
-		// Router may not have committed the previous write yet; retry with a fresh fetch.
-		c.logDebug("remove: MAC not found on first attempt, retrying after delay")
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
-		page, err = c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
-		if err != nil {
-			return err
-		}
-		controlName = findControlName(page)
-	}
-	if controlName == "" {
 		return fmt.Errorf("MAC entry not found: %s", normalized)
 	}
 
@@ -408,6 +402,7 @@ func (c *Client) RemoveMAC(ctx context.Context, mac string) error {
 		return err
 	}
 	c.macRegPage = result
+	c.saveMacRegPage(result)
 	return nil
 }
 
