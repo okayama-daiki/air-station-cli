@@ -45,17 +45,20 @@ func run(ctx context.Context, argv []string) error {
 	} else if value := os.Getenv("AIR_STATION_PASSWORD"); value != "" {
 		cfg.Password = value
 	}
+	cfg.Verbose = options["verbose"] == "true"
+	cfg.Debug = options["debug"] == "true"
 
 	client, err := airstation.NewClient(cfg)
 	if err != nil {
 		return err
 	}
-	defer client.Logout(ctx)
 
 	resource := positionals[0]
 	jsonOutput := options["json"] == "true"
 
 	switch resource {
+	case "logout":
+		return client.Logout(ctx)
 	case "sync":
 		if len(positionals) < 2 {
 			return errors.New("missing CSV file path")
@@ -218,6 +221,14 @@ func parseArgs(argv []string) ([]string, map[string]string, error) {
 			options["json"] = "true"
 			continue
 		}
+		if token == "--verbose" {
+			options["verbose"] = "true"
+			continue
+		}
+		if token == "--debug" {
+			options["debug"] = "true"
+			continue
+		}
 		if len(token) < 3 || token[:2] != "--" {
 			positionals = append(positionals, token)
 			continue
@@ -326,6 +337,8 @@ Usage:
   air-station dhcp update <ip-or-mac> [--ip <ip>] [--mac <mac>] [--json]
   air-station dhcp remove <ip-or-mac> [--json]
 
+  air-station logout
+
   air-station sync <csv-file>
 
     Sync MAC filter and DHCP reservations from a CSV file.
@@ -337,6 +350,8 @@ Options:
   --username <name>   Default: %s
   --password <pass>   Default: AIR_STATION_PASSWORD or empty
   --json              Print raw JSON
+  --verbose           Print HTTP request/response lines to stderr
+  --debug             Print operation-level trace to stderr
   -h, --help          Show help
 `, cfg.BaseURL, cfg.Username)
 }

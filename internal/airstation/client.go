@@ -46,6 +46,8 @@ type Config struct {
 	Password  string
 	Timeout   time.Duration
 	UserAgent string
+	Verbose   bool
+	Debug     bool
 }
 
 func DefaultConfig() Config {
@@ -58,14 +60,17 @@ func DefaultConfig() Config {
 }
 
 type Client struct {
-	baseURL    *url.URL
-	username   string
-	password   string
-	userAgent  string
-	jar        http.CookieJar
-	timeout    time.Duration
-	loggedIn   bool
-	macRegPage *Page // cached POST response for chaining mac_reg.html operations
+	baseURL     *url.URL
+	username    string
+	password    string
+	userAgent   string
+	jar         http.CookieJar
+	timeout     time.Duration
+	verbose     bool
+	debug       bool
+	loggedIn    bool
+	sessionFile string
+	macRegPage  *Page // cached POST response for chaining mac_reg.html operations
 }
 
 type MacFilterState struct {
@@ -122,14 +127,30 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("create cookie jar: %w", err)
 	}
 
-	return &Client{
-		baseURL:   baseURL,
-		username:  cfg.Username,
-		password:  cfg.Password,
-		userAgent: cfg.UserAgent,
-		jar:       jar,
-		timeout:   cfg.Timeout,
-	}, nil
+	sessionFile, err := sessionFilePath(baseURL)
+	if err != nil {
+		sessionFile = ""
+	}
+
+	c := &Client{
+		baseURL:     baseURL,
+		username:    cfg.Username,
+		password:    cfg.Password,
+		userAgent:   cfg.UserAgent,
+		jar:         jar,
+		timeout:     cfg.Timeout,
+		verbose:     cfg.Verbose,
+		debug:       cfg.Debug,
+		sessionFile: sessionFile,
+	}
+	c.loadSession()
+	return c, nil
+}
+
+func (c *Client) logDebug(format string, args ...any) {
+	if c.debug {
+		fmt.Fprintf(os.Stderr, "[debug] "+format+"\n", args...)
+	}
 }
 
 func (c *Client) Login(ctx context.Context) error {
@@ -140,6 +161,7 @@ func (c *Client) Login(ctx context.Context) error {
 		return errors.New("password is required: set --password or AIR_STATION_PASSWORD")
 	}
 
+	c.logDebug("login: authenticating as %s", c.username)
 	loginPage, html, err := c.fetchPage(ctx, loginPath, nil)
 	if err != nil {
 		return err
@@ -182,6 +204,8 @@ func (c *Client) Login(ctx context.Context) error {
 		return fmt.Errorf("login failed: invalid username or password (username: %s)", c.username)
 	}
 	c.loggedIn = true
+	c.logDebug("login: success")
+	c.saveSession()
 	return nil
 }
 
@@ -525,7 +549,9 @@ func (c *Client) Logout(ctx context.Context) error {
 		return nil
 	}
 	c.loggedIn = false
+	c.deleteSession()
 
+	c.logDebug("logout: fetching login page")
 	page, _, err := c.fetchPage(ctx, loginPath, nil)
 	if err != nil {
 		return err
@@ -537,24 +563,42 @@ func (c *Client) Logout(ctx context.Context) error {
 	})
 	if err != nil {
 		// No logout form found — session will expire naturally
+		c.logDebug("logout: no logout form found, session will expire naturally")
 		return nil
 	}
 
+	c.logDebug("logout: submitting logout form")
 	values := form.Values("")
-	return c.submitForm(ctx, page, form, values, "")
+	err = c.submitForm(ctx, page, form, values, "")
+	if err == nil {
+		c.logDebug("logout: success")
+	}
+	return err
 }
 
 func (c *Client) getAuthenticatedPage(ctx context.Context, path string) (*Page, error) {
 	if err := c.Login(ctx); err != nil {
 		return nil, err
 	}
+	c.logDebug("fetch: %s", path)
 	page, _, err := c.fetchPage(ctx, path, nil)
 	if err != nil {
 		return nil, err
 	}
 	if isLoginPage(page.Doc) {
+		c.logDebug("fetch: session expired, re-authenticating")
 		c.loggedIn = false
-		return nil, errors.New("session expired")
+		c.deleteSession()
+		if err := c.Login(ctx); err != nil {
+			return nil, err
+		}
+		page, _, err = c.fetchPage(ctx, path, nil)
+		if err != nil {
+			return nil, err
+		}
+		if isLoginPage(page.Doc) {
+			return nil, errors.New("session expired")
+		}
 	}
 	return page, nil
 }
@@ -577,6 +621,7 @@ func (c *Client) submitForm(ctx context.Context, page *Page, form *Form, values 
 }
 
 func (c *Client) submitFormWithPage(ctx context.Context, page *Page, form *Form, values url.Values, clickedName string) (*Page, error) {
+	c.logDebug("submit: %s %s (clicked=%s)", strings.ToUpper(form.Method), form.Action, clickedName)
 	target, err := page.URL.Parse(form.Action)
 	if err != nil {
 		return nil, fmt.Errorf("resolve form action: %w", err)

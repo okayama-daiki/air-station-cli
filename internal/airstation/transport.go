@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -102,6 +103,10 @@ func (c *Client) roundTrip(ctx context.Context, method string, target *url.URL, 
 	request.WriteString("\r\n")
 	request.WriteString(body)
 
+	if c.verbose {
+		fmt.Fprintf(os.Stderr, "> %s %s\n", method, target.RequestURI())
+	}
+
 	if _, err := conn.Write(request.Bytes()); err != nil {
 		return nil, err
 	}
@@ -114,6 +119,11 @@ func (c *Client) roundTrip(ctx context.Context, method string, target *url.URL, 
 	statusCode, err := parseStatusCode(statusLine)
 	if err != nil {
 		return nil, err
+	}
+
+	if c.verbose {
+		fmt.Fprintf(os.Stderr, "< %s", strings.TrimRight(statusLine, "\r\n"))
+		fmt.Fprintln(os.Stderr)
 	}
 
 	headers := make(textproto.MIMEHeader)
