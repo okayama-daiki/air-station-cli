@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -49,18 +48,9 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	baseURL := os.Getenv("AIR_STATION_BASE_URL")
-	if baseURL == "" {
-		baseURL = defaultBaseURL
-	}
-	username := os.Getenv("AIR_STATION_USERNAME")
-	if username == "" {
-		username = defaultUsername
-	}
 	return Config{
-		BaseURL:   baseURL,
-		Username:  username,
-		Password:  os.Getenv("AIR_STATION_PASSWORD"),
+		BaseURL:   defaultBaseURL,
+		Username:  defaultUsername,
 		Timeout:   15 * time.Second,
 		UserAgent: desktopUserAgent,
 	}
@@ -170,7 +160,7 @@ func (c *Client) Login(ctx context.Context) error {
 	values.Del("airstation_pass")
 	values.Set("encrypted", encrypted)
 
-	if _, _, err := c.submitForm(ctx, loginPage, form, values, ""); err != nil {
+	if err := c.submitForm(ctx, loginPage, form, values, ""); err != nil {
 		return err
 	}
 
@@ -186,7 +176,7 @@ func (c *Client) Login(ctx context.Context) error {
 }
 
 func (c *Client) ReadMacFiltering(ctx context.Context) (*MacFilterState, error) {
-	page, _, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac.html")
+	page, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac.html")
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +209,7 @@ func (c *Client) ReadMacFiltering(ctx context.Context) (*MacFilterState, error) 
 }
 
 func (c *Client) SetMacFiltering(ctx context.Context, enabled24, enabled5 *bool) (*MacFilterState, error) {
-	page, _, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac.html")
+	page, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac.html")
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +228,7 @@ func (c *Client) SetMacFiltering(ctx context.Context, enabled24, enabled5 *bool)
 		setCheckbox(values, form, "macmode_11a", *enabled5)
 	}
 
-	if _, _, err := c.submitForm(ctx, page, form, values, ""); err != nil {
+	if err := c.submitForm(ctx, page, form, values, ""); err != nil {
 		return nil, err
 	}
 	return c.ReadMacFiltering(ctx)
@@ -250,7 +240,7 @@ func (c *Client) AddMAC(ctx context.Context, mac string) (*MacFilterState, error
 		return nil, fmt.Errorf("invalid MAC address: %s", mac)
 	}
 
-	page, _, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
+	page, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +253,7 @@ func (c *Client) AddMAC(ctx context.Context, mac string) (*MacFilterState, error
 
 	values := form.Values("ADD")
 	values.Set("maclist", normalized)
-	if _, _, err := c.submitForm(ctx, page, form, values, "ADD"); err != nil {
+	if err := c.submitForm(ctx, page, form, values, "ADD"); err != nil {
 		return nil, err
 	}
 	return c.ReadMacFiltering(ctx)
@@ -282,7 +272,7 @@ func (c *Client) UpdateMAC(ctx context.Context, currentMAC, newMAC string) (*Mac
 	}
 
 	path := fmt.Sprintf("/cgi-bin/cgi?req=frm&frm=mac_reg.html&EDIT%d=1", entry.Index)
-	page, _, err := c.getAuthenticatedPage(ctx, path)
+	page, err := c.getAuthenticatedPage(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +287,7 @@ func (c *Client) UpdateMAC(ctx context.Context, currentMAC, newMAC string) (*Mac
 
 	values := form.Values(submitName)
 	values.Set("maclist", next)
-	if _, _, err := c.submitForm(ctx, page, form, values, submitName); err != nil {
+	if err := c.submitForm(ctx, page, form, values, submitName); err != nil {
 		return nil, err
 	}
 	return c.ReadMacFiltering(ctx)
@@ -310,7 +300,7 @@ func (c *Client) RemoveMAC(ctx context.Context, mac string) (*MacFilterState, er
 		return nil, err
 	}
 
-	page, _, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
+	page, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
 	if err != nil {
 		return nil, err
 	}
@@ -324,14 +314,14 @@ func (c *Client) RemoveMAC(ctx context.Context, mac string) (*MacFilterState, er
 	}
 
 	values := form.Values("")
-	if _, _, err := c.submitForm(ctx, page, form, values, ""); err != nil {
+	if err := c.submitForm(ctx, page, form, values, ""); err != nil {
 		return nil, err
 	}
 	return c.ReadMacFiltering(ctx)
 }
 
 func (c *Client) ReadDHCPStaticAssignments(ctx context.Context) ([]DHCPAssignment, error) {
-	page, _, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=dhcps_lease.html")
+	page, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=dhcps_lease.html")
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +378,7 @@ func (c *Client) AddDHCPStaticAssignment(ctx context.Context, ip, mac string) ([
 		return nil, errors.New("invalid IP or MAC address")
 	}
 
-	page, _, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=dhcps_lease_edit.html&edittag=-1&EDITTAG_FROM_NEW=1")
+	page, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=dhcps_lease_edit.html&edittag=-1&EDITTAG_FROM_NEW=1")
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +392,7 @@ func (c *Client) AddDHCPStaticAssignment(ctx context.Context, ip, mac string) ([
 	values := form.Values("ADD")
 	values.Set("manip-1", ip)
 	values.Set("manmac-1", normalizedMAC)
-	if _, _, err := c.submitForm(ctx, page, form, values, "ADD"); err != nil {
+	if err := c.submitForm(ctx, page, form, values, "ADD"); err != nil {
 		return nil, err
 	}
 	return c.ReadDHCPStaticAssignments(ctx)
@@ -430,7 +420,7 @@ func (c *Client) UpdateDHCPStaticAssignment(ctx context.Context, selector string
 	}
 
 	path := fmt.Sprintf("/cgi-bin/cgi?req=frm&frm=dhcps_lease_edit.html&edittag=%d", *current.EditTag)
-	page, _, err := c.getAuthenticatedPage(ctx, path)
+	page, err := c.getAuthenticatedPage(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -448,7 +438,7 @@ func (c *Client) UpdateDHCPStaticAssignment(ctx context.Context, selector string
 	values := form.Values(submitName)
 	values.Set(fieldIP, ip)
 	values.Set(fieldMAC, mac)
-	if _, _, err := c.submitForm(ctx, page, form, values, submitName); err != nil {
+	if err := c.submitForm(ctx, page, form, values, submitName); err != nil {
 		return nil, err
 	}
 	return c.ReadDHCPStaticAssignments(ctx)
@@ -463,7 +453,7 @@ func (c *Client) RemoveDHCPStaticAssignment(ctx context.Context, selector string
 		return nil, fmt.Errorf("DHCP assignment cannot be removed: %s", selector)
 	}
 
-	page, _, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=dhcps_lease.html")
+	page, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=dhcps_lease.html")
 	if err != nil {
 		return nil, err
 	}
@@ -477,25 +467,25 @@ func (c *Client) RemoveDHCPStaticAssignment(ctx context.Context, selector string
 	}
 
 	values := form.Values(submitName)
-	if _, _, err := c.submitForm(ctx, page, form, values, submitName); err != nil {
+	if err := c.submitForm(ctx, page, form, values, submitName); err != nil {
 		return nil, err
 	}
 	return c.ReadDHCPStaticAssignments(ctx)
 }
 
-func (c *Client) getAuthenticatedPage(ctx context.Context, path string) (*Page, string, error) {
+func (c *Client) getAuthenticatedPage(ctx context.Context, path string) (*Page, error) {
 	if err := c.Login(ctx); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	page, html, err := c.fetchPage(ctx, path, nil)
+	page, _, err := c.fetchPage(ctx, path, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if isLoginPage(page.Doc) {
 		c.loggedIn = false
-		return nil, "", errors.New("session expired")
+		return nil, errors.New("session expired")
 	}
-	return page, html, nil
+	return page, nil
 }
 
 func (c *Client) fetchPage(ctx context.Context, path string, referer *url.URL) (*Page, string, error) {
@@ -510,10 +500,10 @@ func (c *Client) fetchPage(ctx context.Context, path string, referer *url.URL) (
 	return &Page{URL: finalURL, Doc: doc}, html, nil
 }
 
-func (c *Client) submitForm(ctx context.Context, page *Page, form *Form, values url.Values, clickedName string) (*Page, string, error) {
+func (c *Client) submitForm(ctx context.Context, page *Page, form *Form, values url.Values, clickedName string) error {
 	target, err := page.URL.Parse(form.Action)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve form action: %w", err)
+		return fmt.Errorf("resolve form action: %w", err)
 	}
 	method := form.Method
 	if method == "" {
@@ -527,22 +517,12 @@ func (c *Client) submitForm(ctx context.Context, page *Page, form *Form, values 
 		}
 	}
 
-	doc, finalURL, html, err := c.requestDocument(ctx, method, target, values, page.URL)
-	if err != nil {
-		return nil, "", err
-	}
-	return &Page{URL: finalURL, Doc: doc}, html, nil
+	_, _, _, err = c.requestDocument(ctx, method, target, values, page.URL)
+	return err
 }
 
 func (c *Client) requestDocument(ctx context.Context, method string, target *url.URL, values url.Values, referer *url.URL) (*goquery.Document, *url.URL, string, error) {
-	var bodyReader *strings.Reader
-	if values != nil {
-		bodyReader = strings.NewReader(values.Encode())
-	} else {
-		bodyReader = strings.NewReader("")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, target.String(), bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), nil)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -572,7 +552,7 @@ func (c *Client) resolveURL(path string) (*url.URL, error) {
 }
 
 func (c *Client) findMACRegistryEntry(ctx context.Context, mac string) (*MacRegistryEntry, error) {
-	page, _, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
+	page, err := c.getAuthenticatedPage(ctx, "/cgi-bin/cgi?req=frm&frm=mac_reg.html")
 	if err != nil {
 		return nil, err
 	}
@@ -602,9 +582,9 @@ func (c *Client) findMACRegistryEntry(ctx context.Context, mac string) (*MacRegi
 }
 
 func (c *Client) findDHCPAssignment(ctx context.Context, selector string) (*DHCPAssignment, error) {
-	normalizedSelector := strings.TrimSpace(selector)
-	if IsMACAddress(normalizedSelector) {
-		normalizedSelector = NormalizeMAC(normalizedSelector)
+	normalizedSelector := NormalizeMAC(selector)
+	if !IsMACAddress(normalizedSelector) {
+		normalizedSelector = strings.TrimSpace(selector)
 	}
 
 	assignments, err := c.ReadDHCPStaticAssignments(ctx)
@@ -636,10 +616,8 @@ func IsIPv4(value string) bool {
 
 func isLoginPage(doc *goquery.Document) bool {
 	title := strings.TrimSpace(doc.Find("title").First().Text())
-	if strings.EqualFold(title, "LOGIN") {
-		return true
-	}
-	return doc.Find("#authform").Length() > 0 && doc.Find(`input[name="airstation_pass"]`).Length() > 0
+	return strings.EqualFold(title, "LOGIN") ||
+		(doc.Find("#authform").Length() > 0 && doc.Find(`input[name="airstation_pass"]`).Length() > 0)
 }
 
 func setCheckbox(values url.Values, form *Form, name string, checked bool) {
@@ -707,10 +685,7 @@ func wrap64(input string) string {
 
 	var builder strings.Builder
 	for start := 0; start < len(input); start += 64 {
-		end := start + 64
-		if end > len(input) {
-			end = len(input)
-		}
+		end := min(start+64, len(input))
 		if start > 0 {
 			builder.WriteByte('\n')
 		}
@@ -727,7 +702,7 @@ func encodeURIComponent(value string) string {
 			continue
 		}
 		for _, b := range []byte(string(r)) {
-			builder.WriteString(fmt.Sprintf("%%%02X", b))
+			fmt.Fprintf(&builder, "%%%02X", b)
 		}
 	}
 	return builder.String()

@@ -11,9 +11,9 @@ import (
 func decodeHTML(contentType string, body []byte) (string, error) {
 	encoding, _, _ := charset.DetermineEncoding(body, contentType)
 	reader := transform.NewReader(bytes.NewReader(body), encoding.NewDecoder())
-	bytes, err := io.ReadAll(reader)
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return "", err
 	}
-	return string(bytes), nil
+	return string(data), nil
 }

@@ -7,39 +7,15 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"air-station-cli/internal/airstation"
 )
 
 func main() {
-	_ = loadDotEnv(".env")
 	if err := run(context.Background(), os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-}
-
-func loadDotEnv(filename string) error {
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return err
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		if os.Getenv(key) == "" {
-			os.Setenv(key, strings.TrimSpace(value))
-		}
-	}
-	return nil
 }
 
 func run(ctx context.Context, argv []string) error {
@@ -52,7 +28,7 @@ func run(ctx context.Context, argv []string) error {
 	if err != nil {
 		return err
 	}
-	if len(positionals) < 2 {
+	if len(positionals) < 1 {
 		printHelp()
 		return errors.New("resource and action are required")
 	}
@@ -67,21 +43,33 @@ func run(ctx context.Context, argv []string) error {
 	if value := options["password"]; value != "" {
 		cfg.Password = value
 	}
-	cfg.Timeout = 15 * time.Second
 
 	client, err := airstation.NewClient(cfg)
 	if err != nil {
 		return err
 	}
 
-	resource, action := positionals[0], positionals[1]
+	resource := positionals[0]
 	jsonOutput := options["json"] == "true"
 
 	switch resource {
+	case "sync":
+		if len(positionals) < 2 {
+			return errors.New("missing CSV file path")
+		}
+		return runSync(ctx, client, positionals[1])
 	case "mac":
-		return runMAC(ctx, client, action, positionals[2:], options, jsonOutput)
+		if len(positionals) < 2 {
+			printHelp()
+			return errors.New("missing mac action")
+		}
+		return runMAC(ctx, client, positionals[1], positionals[2:], options, jsonOutput)
 	case "dhcp":
-		return runDHCP(ctx, client, action, positionals[2:], options, jsonOutput)
+		if len(positionals) < 2 {
+			printHelp()
+			return errors.New("missing dhcp action")
+		}
+		return runDHCP(ctx, client, positionals[1], positionals[2:], options, jsonOutput)
 	default:
 		return fmt.Errorf("unknown resource: %s", resource)
 	}
@@ -148,13 +136,13 @@ func runDHCP(ctx context.Context, client *airstation.Client, action string, args
 	case "show":
 		result, err = client.ReadDHCPStaticAssignments(ctx)
 	case "add":
-		ip, err := requireOption(options, "ip")
-		if err != nil {
-			return err
+		ip, err1 := requireOption(options, "ip")
+		if err1 != nil {
+			return err1
 		}
-		mac, err := requireOption(options, "mac")
-		if err != nil {
-			return err
+		mac, err2 := requireOption(options, "mac")
+		if err2 != nil {
+			return err2
 		}
 		result, err = client.AddDHCPStaticAssignment(ctx, ip, mac)
 	case "update":
@@ -190,10 +178,6 @@ func parseArgs(argv []string) ([]string, map[string]string, error) {
 
 	for index := 0; index < len(argv); index++ {
 		token := argv[index]
-		if token == "-h" || token == "--help" {
-			options["help"] = "true"
-			continue
-		}
 		if token == "--json" {
 			options["json"] = "true"
 			continue
@@ -202,7 +186,7 @@ func parseArgs(argv []string) ([]string, map[string]string, error) {
 			positionals = append(positionals, token)
 			continue
 		}
-		if index+1 >= len(argv) || len(argv[index+1]) >= 2 && argv[index+1][:2] == "--" {
+		if index+1 >= len(argv) || strings.HasPrefix(argv[index+1], "--") {
 			return nil, nil, fmt.Errorf("missing value for %s", token)
 		}
 		options[token[2:]] = argv[index+1]
@@ -291,6 +275,7 @@ func onOff(value bool) string {
 }
 
 func printHelp() {
+	cfg := airstation.DefaultConfig()
 	fmt.Printf(`air-station
 
 Usage:
@@ -305,11 +290,17 @@ Usage:
   air-station dhcp update <ip-or-mac> [--ip <ip>] [--mac <mac>] [--json]
   air-station dhcp remove <ip-or-mac> [--json]
 
+  air-station sync <csv-file>
+
+    Sync MAC filter and DHCP reservations from a CSV file.
+    CSV format: MAC,IP (one entry per line, header row optional).
+    Shows a diff and prompts for confirmation before applying changes.
+
 Options:
   --base-url <url>    Default: %s
   --username <name>   Default: %s
-  --password <pass>   Default: configured in source
+  --password <pass>   Default: AIR_STATION_PASSWORD env var
   --json              Print raw JSON
   -h, --help          Show help
-`, airstation.DefaultConfig().BaseURL, airstation.DefaultConfig().Username)
+`, cfg.BaseURL, cfg.Username)
 }

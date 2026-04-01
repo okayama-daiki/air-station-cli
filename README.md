@@ -7,12 +7,11 @@ Current scope:
 - MAC address filtering
 - DHCP static assignments
 
-Default target is configured via `.env` (copy `.env.example` and fill in your values):
+Default target: `http://192.168.11.1` / `admin`. Password must be supplied via `--password` (or a shell alias).
 
-```
-AIR_STATION_BASE_URL=http://192.168.11.1
-AIR_STATION_USERNAME=admin
-AIR_STATION_PASSWORD=...
+```bash
+# ~/.zshrc
+alias air-station='/path/to/air-station --password <your-password>'
 ```
 
 ## Build
@@ -49,10 +48,10 @@ JSON output:
 ./air-station dhcp show --json
 ```
 
-Useful options (override `.env` values at runtime):
+Options:
 
 ```bash
---base-url <url>
---username <name>
+--base-url <url>   # default: http://192.168.11.1
+--username <name>  # default: admin
 --password <pass>
 ```
